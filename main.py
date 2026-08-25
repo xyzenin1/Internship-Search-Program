@@ -1,13 +1,11 @@
 import csv
 import requests
-from bs4 import BeautifulSoup
 import json
 
 from dotenv import load_dotenv
 import os
 from email.mime.text import MIMEText
 import smtplib
-
 import time
 
 import gspread
@@ -15,7 +13,6 @@ from google.oauth2.service_account import Credentials
 from gspread.utils import ValidationConditionType
 
 load_dotenv()
-
 
 CARRIER_GATEWAYS = {
     "att": "txt.att.net",
@@ -33,8 +30,6 @@ SMTP_EMAIL = os.getenv("SMTP_EMAIL")
 SMTP_APP_PASSWORD = os.getenv("SMTP_APP_PASSWORD")
 PHONE_NUMBER = os.getenv("PHONE_NUMBER")
 CARRIER = os.getenv("CARRIER")
-
-print("DEBUG:", SMTP_EMAIL, PHONE_NUMBER, CARRIER)
 
 
 def get_sms_gateway_address():
@@ -74,18 +69,20 @@ def send_text(body):
 def send_new_job_texts(jobs, chunk_size=300, delay_seconds=3):
     # Splits into multiple texts if the list is long
     # If message is too long, it might get rejected
+    # A short delay between sends helps avoid carrier spam filtering,
+    # which can silently drop rapid back-to-back messages from the same sender.
     header = f"{len(jobs)} new matching internships:\n"
     body = header
     chunks = []
     for job in jobs:
-        line = f"{job['company']} - {job['role']} - {job['location']}\n"
+        line = f"{job['company']} - {job['role']} - {job['location']} - {job['link']}\n"
         if len(body) + len(line) > chunk_size:
             chunks.append(body)
             body = ""
         body += line
     if body.strip():
         chunks.append(body)
-        
+
     for i, chunk in enumerate(chunks):
         send_text(chunk)
         if i < len(chunks) - 1:
@@ -99,70 +96,42 @@ def send_new_job_texts(jobs, chunk_size=300, delay_seconds=3):
 
 
 
-url = "https://github.com/SimplifyJobs/Summer2027-Internships"
+LISTINGS_URL = "https://raw.githubusercontent.com/SimplifyJobs/Summer2027-Internships/dev/.github/scripts/listings.json"
 headers = {"User-Agent": "Mozilla/5.0"}
-response = requests.get(url, headers=headers, timeout = 15)
+response = requests.get(LISTINGS_URL, headers=headers, timeout=15)
 print(response.status_code)     # 200 is good
 
-# parses the html string so we can now search
-soup = BeautifulSoup(response.text, "html.parser")
-
-article = soup.find("article", class_="markdown-body")
-
-tables = article.find_all("table")
-print(len(tables))      # category tables
+listings = response.json()
+print(f"{len(listings)} total listings in feed")
 
 
 print(os.path.exists("service_account.json"))
 
 
-#print out tables
-# table = tables[0]
-# rows = table.find_all("tr")
-
-# for row in rows[1:]:
-#     cells = row.find_all("td")
-#     company = cells[0].get_text(strip=True)
-#     role = cells[1].get_text(strip=True)
-#     location = cells[2].get_text(strip=True)
-#     print(company, "-", role)
-    
-
-    
-current_heading = None
 all_jobs = []
 
+for entry in listings:
+    # skip closed postings and anything the repo has hidden
+    if not entry.get("active", False):
+        continue
+    if not entry.get("is_visible", True):
+        continue
 
-for el in article.find_all(["h2", "h3", "table"]):
-    if el.name in ("h2", "h3"):
-        current_heading = el.get_text(strip=True)
-    else:
-        rows = el.find_all("tr")
-        for row in rows[1:]:        # account for the header
-            cells = row.find_all("td")
-            
-            # if a row is incomplete
-            if len(cells) < 4:
-                continue
-            
-            company = cells[0].get_text(strip=True)
-            role = cells[1].get_text(strip=True)
-            location = cells[2].get_text(separator=", ", strip=True)
-            
-            #   find link for internships
-            link_tag = cells[3].find("a")
-            if link_tag:
-                link = link_tag["href"]
-            else:
-                link = ""
-                
-            all_jobs.append({
-                "category": current_heading,
-                "company": company,
-                "role": role,
-                "location": location,
-                "link": link
-            })
+    company = entry.get("company_name", "").strip()
+    role = entry.get("title", "").strip()
+    location = ", ".join(entry.get("locations", []))
+    link = entry.get("url", "")
+    category = entry.get("category", "Other")   # Software, Product, AI/ML/Data, Quant, Hardware, Other
+
+    all_jobs.append({
+        "category": category,
+        "company": company,
+        "role": role,
+        "location": location,
+        "link": link
+    })
+
+print(f"{len(all_jobs)} active listings after filtering")
 
 
 
@@ -206,6 +175,8 @@ while True:
         
         for job in all_jobs:
             print(f"{job['company']} - {job['role']} - {job['location']} - {job['link']}")
+                
+                
         break
     elif choice == 2:
         jobs_to_show = location_jobs
@@ -239,24 +210,24 @@ while True:
 
         ds_jobs = [
                 job for job in location_jobs
-                if "Data Science" in job["category"]
+                if job["category"] == "AI/ML/Data"
             ]
 
         print("")
         print(f"{len(ds_jobs)} match for Data Science")
         if len(ds_jobs) > 0:
-            for job in location_jobs:
+            for job in ds_jobs:
                 print(f"{job['company']} - {job['role']} - {job['location']} - {job['link']}")
                 
         pm_jobs = [
                 job for job in location_jobs
-                if "Product Management" in job["category"]
+                if job["category"] == "Product"
             ]
 
         print("")
         print(f"{len(pm_jobs)} match for Product Management")
         if len(pm_jobs) > 0:
-            for job in location_jobs:
+            for job in pm_jobs:
                 print(f"{job['company']} - {job['role']} - {job['location']} - {job['link']}")
         
         
@@ -409,9 +380,9 @@ else:
             return True
         if any(kw in role_lower for kw in swe_keywords):
             return True
-        if "Data Science" in category:
+        if category == "AI/ML/Data":
             return True
-        if "Product Management" in category:
+        if category == "Product":
             return True
         return False
     
