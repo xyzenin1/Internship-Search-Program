@@ -1,6 +1,6 @@
 # Internship Search
  
-A Python script that searches for internships by scraping https://github.com/SimplifyJobs/Summer2027-Internships, which is the SimplifyJobs Summer Internships tracker on GitHub. After scraping, it will display the information on a google sheet.
+A Python script that searches for internships by using https://github.com/SimplifyJobs/Summer2027-Internships, which is the SimplifyJobs Summer Internships tracker on GitHub. After scraping, it will display the information on a google sheet.
 
 
 ## Setup
